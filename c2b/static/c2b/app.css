@@ -28,6 +28,16 @@ body {
 .nav { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .nav a { color: var(--muted); text-decoration: none; }
 .nav a:hover { color: var(--text); }
+.nav__logout { display: inline; margin: 0; }
+.nav__logout_btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+}
+.nav__logout_btn:hover { color: var(--text); }
 
 .pagehead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0; }
 .pagehead h1 { margin: 0; font-size: 24px; }

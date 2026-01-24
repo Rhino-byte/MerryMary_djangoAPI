@@ -29,10 +29,22 @@ urlpatterns = [
         views.c2b_validation,
         name="c2b_validation",
     ),
+    # Avoid 301 redirects for POST if a client omits trailing slash.
+    path(
+        "webhooks/c2b/<int:shortcode_id>/<str:token>/validation",
+        views.c2b_validation,
+        name="c2b_validation_noslash",
+    ),
     path(
         "webhooks/c2b/<int:shortcode_id>/<str:token>/confirmation/",
         views.c2b_confirmation,
         name="c2b_confirmation",
+    ),
+    # Avoid 301 redirects for POST if a client omits trailing slash.
+    path(
+        "webhooks/c2b/<int:shortcode_id>/<str:token>/confirmation",
+        views.c2b_confirmation,
+        name="c2b_confirmation_noslash",
     ),
 ]
 

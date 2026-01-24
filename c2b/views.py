@@ -7,7 +7,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from django.http import HttpRequest, JsonResponse
-from django.http import Http404
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -61,12 +60,6 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _ensure_token_or_404(shortcode: Shortcode, token: str) -> None:
-    if token != shortcode.webhook_token:
-        # Hide existence of shortcode to anonymous callers.
-        raise Http404()
-
-
 def _get_validation_rule(shortcode: Shortcode):
     try:
         return shortcode.validation_rule
@@ -115,7 +108,7 @@ def _upsert_transaction(
     trans_id = payload.get("TransID") or payload.get("TransactionID") or payload.get("TransId")
     trans_time = _parse_datetime(payload.get("TransTime"))
     amount = _parse_amount(payload.get("TransAmount"))
-    msisdn = payload.get("MSISDN") or payload.get("MSISDN")  # keep field name explicit
+    msisdn = payload.get("MSISDN")
     bill_ref = payload.get("BillRefNumber")
 
     defaults = {
