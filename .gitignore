@@ -1,0 +1,15 @@
+.env
+daraja_env
+.venv
+
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Common tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
