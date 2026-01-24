@@ -10,6 +10,8 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.0/ref/settings/
 """
 
+import os
+from urllib.parse import urlparse
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -20,12 +22,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-foa(ieubz1!n*ku^_3=_%v4@7j&t+*00_*953dqke#!4*3xfv3'
+# For production, set DJANGO_SECRET_KEY in the environment.
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-change-me")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "1") in ("1", "true", "True", "yes", "YES")
 
-ALLOWED_HOSTS = []
+_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").strip()
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(",") if h.strip()]
 
 
 # Application definition
@@ -37,10 +41,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'c2b',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -54,7 +60,7 @@ ROOT_URLCONF = 'MpesaApiDemo.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -73,12 +79,27 @@ WSGI_APPLICATION = 'MpesaApiDemo.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+_DATABASE_URL = os.environ.get("DATABASE_URL")
+if _DATABASE_URL and _DATABASE_URL.startswith(("postgres://", "postgresql://")):
+    parsed = urlparse(_DATABASE_URL)
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": (parsed.path or "").lstrip("/"),
+            "USER": parsed.username or "",
+            "PASSWORD": parsed.password or "",
+            "HOST": parsed.hostname or "",
+            "PORT": str(parsed.port or ""),
+            "OPTIONS": {"sslmode": "require"},
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -116,6 +137,56 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# WhiteNoise: serve static files on Render without extra setup.
+STORAGES = {
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"}
+}
+
+# Auth
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
+
+# If you deploy behind a proxy (nginx, cloudflare), set DJANGO_TRUST_PROXY_HEADERS=1
+TRUST_PROXY_HEADERS = os.environ.get("DJANGO_TRUST_PROXY_HEADERS", "0") in ("1", "true", "True", "yes", "YES")
+
+if TRUST_PROXY_HEADERS:
+    # Needed for correct scheme/host when behind proxies/tunnels (ngrok, cloudflared, nginx).
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
+
+if not DEBUG:
+    # Minimal baseline hardening for HTTPS deployments.
+    # You can override these in .env if your platform already handles HTTPS redirects.
+    SECURE_SSL_REDIRECT = os.environ.get("DJANGO_SECURE_SSL_REDIRECT", "1") in (
+        "1",
+        "true",
+        "True",
+        "yes",
+        "YES",
+    )
+    SESSION_COOKIE_SECURE = os.environ.get("DJANGO_SESSION_COOKIE_SECURE", "1") in (
+        "1",
+        "true",
+        "True",
+        "yes",
+        "YES",
+    )
+    CSRF_COOKIE_SECURE = os.environ.get("DJANGO_CSRF_COOKIE_SECURE", "1") in (
+        "1",
+        "true",
+        "True",
+        "yes",
+        "YES",
+    )
+    SECURE_HSTS_SECONDS = int(os.environ.get("DJANGO_SECURE_HSTS_SECONDS", "0") or "0")
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True if SECURE_HSTS_SECONDS else False
+    SECURE_HSTS_PRELOAD = True if SECURE_HSTS_SECONDS else False
+
+# Daraja
+DARAJA_BASE_URL = os.environ.get("DARAJA_BASE_URL", "https://sandbox.safaricom.co.ke/")
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field

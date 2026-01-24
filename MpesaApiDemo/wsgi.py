@@ -11,6 +11,13 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
+try:
+    from .env import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'MpesaApiDemo.settings')
 
 application = get_wsgi_application()

@@ -11,6 +11,13 @@ import os
 
 from django.core.asgi import get_asgi_application
 
+try:
+    from .env import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'MpesaApiDemo.settings')
 
 application = get_asgi_application()

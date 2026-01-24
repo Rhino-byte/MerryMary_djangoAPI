@@ -6,6 +6,13 @@ import sys
 
 def main():
     """Run administrative tasks."""
+    try:
+        from MpesaApiDemo.env import load_dotenv
+
+        load_dotenv()
+    except Exception:
+        # If .env loading fails, fall back to normal env behavior.
+        pass
     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'MpesaApiDemo.settings')
     try:
         from django.core.management import execute_from_command_line

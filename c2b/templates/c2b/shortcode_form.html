@@ -1,0 +1,22 @@
+{% extends "c2b/base.html" %}
+{% block title %}{{ title }}{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <h1>{{ title }}</h1>
+  </div>
+
+  <div class="card">
+    <form method="post">
+      {% csrf_token %}
+      <div class="formgrid">
+        {{ form.as_p }}
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit">Save</button>
+        <a class="btn btn--ghost" href="{% url 'c2b:shortcode_list' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+{% endblock %}
+

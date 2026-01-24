@@ -1,0 +1,64 @@
+{% extends "c2b/base.html" %}
+{% block title %}{{ shortcode.name }}{% endblock %}
+
+{% block content %}
+  <div class="pagehead">
+    <div>
+      <h1>{{ shortcode.name }}</h1>
+      <div class="muted">
+        <code>{{ shortcode.shortcode }}</code> · {{ shortcode.get_type_display }}
+        {% if shortcode.is_active %}· Active{% else %}· Inactive{% endif %}
+      </div>
+    </div>
+    <div class="pagehead__actions">
+      <a class="btn btn--ghost" href="{% url 'c2b:shortcode_edit' shortcode_id=shortcode.id %}">Edit</a>
+      <form method="post" action="{% url 'c2b:shortcode_register_urls' shortcode_id=shortcode.id %}" style="display:inline;">
+        {% csrf_token %}
+        <button class="btn" type="submit">Register URLs</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Webhook URLs</h2>
+      <p class="muted">Use these when registering C2B URLs in Daraja. They include a secret token.</p>
+      <div class="kv">
+        <div class="kv__k">ValidationURL</div>
+        <div class="kv__v"><code class="codeblock">{{ urls.validation_url }}</code></div>
+        <div class="kv__k">ConfirmationURL</div>
+        <div class="kv__v"><code class="codeblock">{{ urls.confirmation_url }}</code></div>
+      </div>
+
+      <h3>Sandbox simulate</h3>
+      <form method="post" action="{% url 'c2b:shortcode_simulate' shortcode_id=shortcode.id %}">
+        {% csrf_token %}
+        <div class="formrow">
+          <label>Amount</label>
+          <input name="amount" value="1" />
+        </div>
+        <div class="formrow">
+          <label>MSISDN</label>
+          <input name="msisdn" value="254708374149" />
+        </div>
+        <div class="formrow">
+          <label>BillRefNumber</label>
+          <input name="bill_ref" value="TEST" />
+        </div>
+        <button class="btn" type="submit">Simulate</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Validation rules</h2>
+      <form method="post">
+        {% csrf_token %}
+        {{ rule_form.as_p }}
+        <div class="actions">
+          <button class="btn" type="submit">Save rules</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
+
