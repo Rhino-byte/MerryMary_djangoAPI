@@ -188,6 +188,12 @@ if not DEBUG:
 # Daraja
 DARAJA_BASE_URL = os.environ.get("DARAJA_BASE_URL", "https://sandbox.safaricom.co.ke/")
 
+# Public base URL (optional)
+# If set, the dashboard will generate webhook URLs using this base instead of the current request host.
+# Useful when developing locally with a tunnel (ngrok/cloudflared), or when running behind a proxy.
+# Example: DJANGO_PUBLIC_BASE_URL="https://your-subdomain.ngrok-free.app"
+PUBLIC_BASE_URL = os.environ.get("DJANGO_PUBLIC_BASE_URL")
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.0/ref/settings/#default-auto-field
 

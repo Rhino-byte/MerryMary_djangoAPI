@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import csv
+from decimal import Decimal, InvalidOperation
 from datetime import date
+import re
 from typing import Any
+from urllib.parse import urljoin
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -18,6 +22,20 @@ from .models import C2BTransaction, C2BValidationRule, Shortcode
 from .services.daraja import DarajaError, register_c2b_urls, simulate_c2b
 
 
+def _sanitize_reference(value: str, *, max_len: int = 12) -> str:
+    """
+    Daraja can reject invalid references with errors like:
+    "The element AccountReference is invalid."
+
+    Keep references conservative:
+    - uppercase
+    - alphanumeric only
+    - short length (default 12, matches common Daraja constraints)
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "", value or "").upper()
+    return cleaned[:max_len]
+
+
 def _webhook_urls(request: HttpRequest, shortcode: Shortcode) -> dict[str, str]:
     validation_path = reverse(
         "c2b:c2b_validation", kwargs={"shortcode_id": shortcode.id, "token": shortcode.webhook_token}
@@ -26,6 +44,16 @@ def _webhook_urls(request: HttpRequest, shortcode: Shortcode) -> dict[str, str]:
         "c2b:c2b_confirmation",
         kwargs={"shortcode_id": shortcode.id, "token": shortcode.webhook_token},
     )
+
+    public_base_url = getattr(settings, "PUBLIC_BASE_URL", None)
+    if public_base_url:
+        # Allow generating HTTPS public callback URLs even when browsing locally.
+        base = str(public_base_url).rstrip("/") + "/"
+        return {
+            "validation_url": urljoin(base, validation_path.lstrip("/")),
+            "confirmation_url": urljoin(base, confirmation_path.lstrip("/")),
+        }
+
     return {
         "validation_url": request.build_absolute_uri(validation_path),
         "confirmation_url": request.build_absolute_uri(confirmation_path),
@@ -125,9 +153,34 @@ def shortcode_register_urls(request: HttpRequest, shortcode_id: int):
 @require_POST
 def shortcode_simulate(request: HttpRequest, shortcode_id: int):
     sc = get_object_or_404(Shortcode, pk=shortcode_id)
-    amount = request.POST.get("amount") or "1"
+    amount_raw = request.POST.get("amount") or "1"
     msisdn = request.POST.get("msisdn") or "254708374149"
-    bill_ref = request.POST.get("bill_ref") or "TEST"
+
+    try:
+        # Daraja expects a numeric JSON value (not a string).
+        amount: int = int(Decimal(str(amount_raw)))
+    except (InvalidOperation, ValueError, TypeError):
+        amount = 1
+
+    # Use the correct command for Till vs Paybill.
+    command_id = (
+        "CustomerBuyGoodsOnline"
+        if sc.type == Shortcode.ShortcodeType.TILL
+        else "CustomerPayBillOnline"
+    )
+
+    bill_ref: str | None
+    if command_id == "CustomerBuyGoodsOnline":
+        # Per Daraja docs, BuyGoods uses a null BillRefNumber (AccountReference).
+        bill_ref = None
+    else:
+        bill_ref_input = (request.POST.get("bill_ref") or "").strip()
+        bill_ref = _sanitize_reference(bill_ref_input)
+        # Daraja sandbox can be inconsistent when repeatedly simulating identical payloads.
+        # If blank after sanitizing, generate a short unique reference (12 chars).
+        if not bill_ref:
+            # "TEST" + 8 digits = 12 chars, all alphanumeric
+            bill_ref = "TEST" + timezone.now().strftime("%H%M%S%f")[-8:]
 
     try:
         result = simulate_c2b(
@@ -137,6 +190,7 @@ def shortcode_simulate(request: HttpRequest, shortcode_id: int):
             amount=amount,
             msisdn=msisdn,
             bill_ref_number=bill_ref,
+            command_id=command_id,
         )
         messages.success(request, f"Simulate OK: {result}")
     except DarajaError as e:

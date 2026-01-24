@@ -124,7 +124,7 @@ def simulate_c2b(
     shortcode: str,
     amount: int | float,
     msisdn: str,
-    bill_ref_number: str,
+    bill_ref_number: str | None,
     command_id: str = "CustomerPayBillOnline",
 ) -> dict[str, Any]:
     """
@@ -133,13 +133,22 @@ def simulate_c2b(
     """
     token = get_access_token(consumer_key=consumer_key, consumer_secret=consumer_secret)
     url = urljoin(_base_url(), "mpesa/c2b/v1/simulate")
-    payload = {
+    # Per Daraja docs:
+    # - PayBill: BillRefNumber is the account reference
+    # - BuyGoods (Till): BillRefNumber should be null
+    #
+    # In practice, some environments reject `"BillRefNumber": null`, so for BuyGoods we omit it.
+    if command_id == "CustomerBuyGoodsOnline":
+        bill_ref_number = None
+
+    payload: dict[str, Any] = {
         "ShortCode": shortcode,
         "CommandID": command_id,
         "Amount": amount,
         "Msisdn": msisdn,
-        "BillRefNumber": bill_ref_number,
     }
+    if bill_ref_number is not None:
+        payload["BillRefNumber"] = bill_ref_number
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=30)
