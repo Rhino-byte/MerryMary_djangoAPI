@@ -175,12 +175,13 @@ def shortcode_simulate(request: HttpRequest, shortcode_id: int):
         bill_ref = None
     else:
         bill_ref_input = (request.POST.get("bill_ref") or "").strip()
-        bill_ref = _sanitize_reference(bill_ref_input)
         # Daraja sandbox can be inconsistent when repeatedly simulating identical payloads.
-        # If blank after sanitizing, generate a short unique reference (12 chars).
-        if not bill_ref:
-            # "TEST" + 8 digits = 12 chars, all alphanumeric
-            bill_ref = "TEST" + timezone.now().strftime("%H%M%S%f")[-8:]
+        # Force uniqueness for PayBill simulations by appending a short time-based suffix.
+        max_len = 12
+        suffix = timezone.now().strftime("%H%M%S%f")[-8:]  # 8 digits
+        base = _sanitize_reference(bill_ref_input, max_len=max_len) or "TEST"
+        keep = max(0, max_len - len(suffix))
+        bill_ref = (base[:keep] + suffix)[:max_len]
 
     try:
         result = simulate_c2b(
