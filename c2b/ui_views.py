@@ -9,6 +9,7 @@ from urllib.parse import urljoin
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.views import redirect_to_login
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -60,10 +61,14 @@ def _webhook_urls(request: HttpRequest, shortcode: Shortcode) -> dict[str, str]:
     }
 
 
-@login_required
 @require_GET
 def home(request: HttpRequest):
-    return redirect("c2b:shortcode_list")
+    # Make "/" behave nicely in production:
+    # - If logged in: go to dashboard
+    # - If not logged in: go to login page
+    if request.user.is_authenticated:
+        return redirect("c2b:shortcode_list")
+    return redirect_to_login(next="/shortcodes/", login_url=settings.LOGIN_URL)
 
 
 @login_required

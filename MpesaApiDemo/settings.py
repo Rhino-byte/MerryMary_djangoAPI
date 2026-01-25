@@ -146,7 +146,7 @@ STORAGES = {
 
 # Auth
 LOGIN_URL = "/accounts/login/"
-LOGIN_REDIRECT_URL = "/"
+LOGIN_REDIRECT_URL = "/shortcodes/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
 
 # If you deploy behind a proxy (nginx, cloudflare), set DJANGO_TRUST_PROXY_HEADERS=1
