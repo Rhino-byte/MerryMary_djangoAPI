@@ -36,20 +36,6 @@ def _sanitize_reference(value: str, *, max_len: int = 12) -> str:
     return cleaned[:max_len]
 
 
-def _unique_reference(prefix: str | None, *, max_len: int = 12) -> str:
-    """
-    Daraja sandbox can be inconsistent when repeatedly simulating identical payloads.
-    This generates a short unique reference (max 12 chars) while preserving a user prefix.
-    """
-    # 6-char suffix gives ~1M combos per day even at same second.
-    suffix = timezone.now().strftime("%H%M%S%f")[-6:]
-    base = _sanitize_reference(prefix or "", max_len=max_len)
-    if not base:
-        base = "TEST"
-    keep = max(0, max_len - len(suffix))
-    return (base[:keep] + suffix)[:max_len]
-
-
 def _webhook_urls(request: HttpRequest, shortcode: Shortcode) -> dict[str, str]:
     validation_path = reverse(
         "c2b:c2b_validation", kwargs={"shortcode_id": shortcode.id, "token": shortcode.webhook_token}
@@ -189,9 +175,12 @@ def shortcode_simulate(request: HttpRequest, shortcode_id: int):
         bill_ref = None
     else:
         bill_ref_input = (request.POST.get("bill_ref") or "").strip()
-        # Always make PayBill simulations unique to avoid sandbox dedupe/flakiness.
-        # (We still preserve the user's prefix if provided.)
-        bill_ref = _unique_reference(bill_ref_input)
+        bill_ref = _sanitize_reference(bill_ref_input)
+        # Daraja sandbox can be inconsistent when repeatedly simulating identical payloads.
+        # If blank after sanitizing, generate a short unique reference (12 chars).
+        if not bill_ref:
+            # "TEST" + 8 digits = 12 chars, all alphanumeric
+            bill_ref = "TEST" + timezone.now().strftime("%H%M%S%f")[-8:]
 
     try:
         result = simulate_c2b(
