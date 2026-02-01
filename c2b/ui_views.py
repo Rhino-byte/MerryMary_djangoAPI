@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import csv
 from decimal import Decimal, InvalidOperation
-from datetime import date
+from datetime import date, datetime, time, timedelta
+import logging
+import secrets
 import re
+import string
 from typing import Any
 from urllib.parse import urljoin
 
@@ -14,13 +17,43 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .forms import ShortcodeForm, ValidationRuleForm
 from .models import C2BTransaction, C2BValidationRule, Shortcode
 from .services.daraja import DarajaError, register_c2b_urls, simulate_c2b
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_time_param(value: str | None) -> time | None:
+    if not value:
+        return None
+    try:
+        return time.fromisoformat(value)  # accepts "HH:MM" or "HH:MM:SS"
+    except Exception:
+        return None
+
+
+def _parse_datetime_local_param(value: str | None) -> datetime | None:
+    """
+    Parse HTML <input type="datetime-local"> value into an aware datetime in current timezone.
+    Expected formats:
+    - YYYY-MM-DDTHH:MM
+    - YYYY-MM-DDTHH:MM:SS
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except Exception:
+        return None
+    tz = timezone.get_current_timezone()
+    if timezone.is_aware(dt):
+        return dt.astimezone(tz)
+    return timezone.make_aware(dt, tz)
 
 
 def _sanitize_reference(value: str, *, max_len: int = 12) -> str:
@@ -35,6 +68,26 @@ def _sanitize_reference(value: str, *, max_len: int = 12) -> str:
     """
     cleaned = re.sub(r"[^A-Za-z0-9]+", "", value or "").upper()
     return cleaned[:max_len]
+
+
+def _random_reference_from_template(template: str, *, max_len: int = 12) -> str:
+    """
+    Generate a random reference while preserving letter/digit positions.
+
+    Example template:
+    - UB14X5KYAA -> (random) QZ83M7TRPD
+      (letters stay letters, digits stay digits)
+    """
+    tmpl = _sanitize_reference(template, max_len=max_len) or "UB14X5KYAA"
+    letters = string.ascii_uppercase
+    digits = string.digits
+    out: list[str] = []
+    for ch in tmpl:
+        if ch.isdigit():
+            out.append(secrets.choice(digits))
+        else:
+            out.append(secrets.choice(letters))
+    return "".join(out)
 
 
 def _webhook_urls(request: HttpRequest, shortcode: Shortcode) -> dict[str, str]:
@@ -180,13 +233,9 @@ def shortcode_simulate(request: HttpRequest, shortcode_id: int):
         bill_ref = None
     else:
         bill_ref_input = (request.POST.get("bill_ref") or "").strip()
-        # Daraja sandbox can be inconsistent when repeatedly simulating identical payloads.
-        # Force uniqueness for PayBill simulations by appending a short time-based suffix.
-        max_len = 12
-        suffix = timezone.now().strftime("%H%M%S%f")[-8:]  # 8 digits
-        base = _sanitize_reference(bill_ref_input, max_len=max_len) or "TEST"
-        keep = max(0, max_len - len(suffix))
-        bill_ref = (base[:keep] + suffix)[:max_len]
+        # Randomize a reference with the same letter/digit pattern as the provided template.
+        # If none is provided, default to the system pattern: UB14X5KYAA.
+        bill_ref = _random_reference_from_template(bill_ref_input or "UB14X5KYAA", max_len=12)
 
     try:
         result = simulate_c2b(
@@ -198,8 +247,23 @@ def shortcode_simulate(request: HttpRequest, shortcode_id: int):
             bill_ref_number=bill_ref,
             command_id=command_id,
         )
+        # Helpful for diagnosing sandbox flakiness: simulate may succeed but callbacks may not arrive.
+        logger.info(
+            "Daraja simulate OK: shortcode=%s command_id=%s bill_ref=%s response=%s",
+            sc.shortcode,
+            command_id,
+            bill_ref,
+            result,
+        )
         messages.success(request, f"Simulate OK: {result}")
     except DarajaError as e:
+        logger.warning(
+            "Daraja simulate FAILED: shortcode=%s command_id=%s bill_ref=%s error=%s",
+            sc.shortcode,
+            command_id,
+            bill_ref,
+            str(e),
+        )
         messages.error(request, str(e))
     return redirect("c2b:shortcode_detail", shortcode_id=sc.id)
 
@@ -207,14 +271,21 @@ def shortcode_simulate(request: HttpRequest, shortcode_id: int):
 @login_required
 @require_GET
 def transactions(request: HttpRequest):
-    selected_date: date | None = None
-    if request.GET.get("date"):
-        try:
-            selected_date = date.fromisoformat(request.GET["date"])
-        except Exception:
-            selected_date = None
-    if not selected_date:
-        selected_date = timezone.localdate()
+    start_dt = _parse_datetime_local_param((request.GET.get("start") or "").strip())
+    end_dt = _parse_datetime_local_param((request.GET.get("end") or "").strip())
+    if start_dt and end_dt and end_dt < start_dt:
+        # Be forgiving if user swaps them.
+        start_dt, end_dt = end_dt, start_dt
+
+    refresh_seconds: int = 0
+    try:
+        refresh_seconds = int((request.GET.get("refresh") or "0").strip() or "0")
+    except Exception:
+        refresh_seconds = 0
+    if refresh_seconds < 0:
+        refresh_seconds = 0
+    if refresh_seconds > 3600:
+        refresh_seconds = 3600
 
     shortcode_id = request.GET.get("shortcode")
     qs = C2BTransaction.objects.select_related("shortcode").order_by("-created_at")
@@ -222,12 +293,33 @@ def transactions(request: HttpRequest):
     if shortcode_id:
         qs = qs.filter(shortcode_id=shortcode_id)
 
-    # Daily view:
+    # If no range provided, default to today's window.
+    if not start_dt and not end_dt:
+        tz = timezone.get_current_timezone()
+        selected_date = timezone.localdate()
+        day_start = timezone.make_aware(datetime.combine(selected_date, time(0, 0, 0)), tz)
+        # Inclusive end for UI friendliness.
+        day_end = day_start + timedelta(hours=23, minutes=59, seconds=59)
+        start_dt = day_start
+        end_dt = day_end
+
+    # Filter window:
     # - Prefer trans_time when available
-    # - Fall back to created_at date when trans_time is null
-    qs = qs.filter(
-        Q(trans_time__date=selected_date) | Q(trans_time__isnull=True, created_at__date=selected_date)
-    )
+    # - Fall back to created_at when trans_time is null
+    if start_dt and end_dt:
+        qs = qs.filter(
+            Q(trans_time__gte=start_dt, trans_time__lte=end_dt)
+            | Q(trans_time__isnull=True, created_at__gte=start_dt, created_at__lte=end_dt)
+        )
+    elif start_dt:
+        qs = qs.filter(
+            Q(trans_time__gte=start_dt) | Q(trans_time__isnull=True, created_at__gte=start_dt)
+        )
+    elif end_dt:
+        qs = qs.filter(Q(trans_time__lte=end_dt) | Q(trans_time__isnull=True, created_at__lte=end_dt))
+
+    # Sum amount across the full filtered result set (not just the displayed slice).
+    total_amount = qs.aggregate(total=Sum("amount")).get("total") or Decimal("0")
 
     shortcodes = Shortcode.objects.order_by("name")
     return render(
@@ -236,8 +328,11 @@ def transactions(request: HttpRequest):
         {
             "transactions": qs[:500],
             "shortcodes": shortcodes,
-            "selected_date": selected_date,
             "selected_shortcode_id": int(shortcode_id) if shortcode_id else None,
+            "selected_start": start_dt.strftime("%Y-%m-%dT%H:%M") if start_dt else "",
+            "selected_end": end_dt.strftime("%Y-%m-%dT%H:%M") if end_dt else "",
+            "refresh_seconds": refresh_seconds,
+            "total_amount": total_amount,
         },
     )
 
@@ -245,23 +340,41 @@ def transactions(request: HttpRequest):
 @login_required
 @require_GET
 def transactions_export_csv(request: HttpRequest):
-    selected_date = timezone.localdate()
-    if request.GET.get("date"):
-        try:
-            selected_date = date.fromisoformat(request.GET["date"])
-        except Exception:
-            pass
+    start_dt = _parse_datetime_local_param((request.GET.get("start") or "").strip())
+    end_dt = _parse_datetime_local_param((request.GET.get("end") or "").strip())
+    if start_dt and end_dt and end_dt < start_dt:
+        start_dt, end_dt = end_dt, start_dt
 
     shortcode_id = request.GET.get("shortcode")
     qs = C2BTransaction.objects.select_related("shortcode").order_by("-created_at")
     if shortcode_id:
         qs = qs.filter(shortcode_id=shortcode_id)
-    qs = qs.filter(
-        Q(trans_time__date=selected_date) | Q(trans_time__isnull=True, created_at__date=selected_date)
-    )
+
+    if not start_dt and not end_dt:
+        tz = timezone.get_current_timezone()
+        selected_date = timezone.localdate()
+        day_start = timezone.make_aware(datetime.combine(selected_date, time(0, 0, 0)), tz)
+        day_end = day_start + timedelta(hours=23, minutes=59, seconds=59)
+        start_dt = day_start
+        end_dt = day_end
+
+    if start_dt and end_dt:
+        qs = qs.filter(
+            Q(trans_time__gte=start_dt, trans_time__lte=end_dt)
+            | Q(trans_time__isnull=True, created_at__gte=start_dt, created_at__lte=end_dt)
+        )
+    elif start_dt:
+        qs = qs.filter(
+            Q(trans_time__gte=start_dt) | Q(trans_time__isnull=True, created_at__gte=start_dt)
+        )
+    elif end_dt:
+        qs = qs.filter(Q(trans_time__lte=end_dt) | Q(trans_time__isnull=True, created_at__lte=end_dt))
 
     response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = f'attachment; filename="transactions_{selected_date.isoformat()}.csv"'
+    filename_date = timezone.localdate().isoformat()
+    if start_dt:
+        filename_date = start_dt.date().isoformat()
+    response["Content-Disposition"] = f'attachment; filename="transactions_{filename_date}.csv"'
 
     writer = csv.writer(response)
     writer.writerow(["shortcode", "trans_id", "amount", "msisdn", "bill_ref", "trans_time", "status", "created_at"])

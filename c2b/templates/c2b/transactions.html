@@ -5,15 +5,19 @@
   <div class="pagehead">
     <h1>Transactions</h1>
     <div class="pagehead__actions">
-      <a class="btn btn--ghost" href="{% url 'c2b:transactions_export_csv' %}?date={{ selected_date|date:'Y-m-d' }}{% if selected_shortcode_id %}&shortcode={{ selected_shortcode_id }}{% endif %}">Export CSV</a>
+      <a class="btn btn--ghost" href="{% url 'c2b:transactions_export_csv' %}{% if selected_start or selected_end or selected_shortcode_id %}?{% endif %}{% if selected_start %}start={{ selected_start }}{% endif %}{% if selected_end %}{% if selected_start %}&{% endif %}end={{ selected_end }}{% endif %}{% if selected_shortcode_id %}{% if selected_start or selected_end %}&{% endif %}shortcode={{ selected_shortcode_id }}{% endif %}">Export CSV</a>
     </div>
   </div>
 
   <div class="card">
     <form method="get" class="filters">
       <div class="formrow">
-        <label>Date</label>
-        <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" />
+        <label>Start</label>
+        <input type="datetime-local" name="start" value="{{ selected_start }}" />
+      </div>
+      <div class="formrow">
+        <label>End</label>
+        <input type="datetime-local" name="end" value="{{ selected_end }}" />
       </div>
       <div class="formrow">
         <label>Shortcode</label>
@@ -26,6 +30,16 @@
           {% endfor %}
         </select>
       </div>
+      <div class="formrow">
+        <label>Auto refresh</label>
+        <select name="refresh">
+          <option value="0" {% if refresh_seconds == 0 %}selected{% endif %}>Off</option>
+          <option value="5" {% if refresh_seconds == 5 %}selected{% endif %}>Every 5s</option>
+          <option value="10" {% if refresh_seconds == 10 %}selected{% endif %}>Every 10s</option>
+          <option value="30" {% if refresh_seconds == 30 %}selected{% endif %}>Every 30s</option>
+          <option value="60" {% if refresh_seconds == 60 %}selected{% endif %}>Every 60s</option>
+        </select>
+      </div>
       <div class="actions">
         <button class="btn" type="submit">Filter</button>
       </div>
@@ -33,34 +47,43 @@
   </div>
 
   <div class="card">
+    <div class="muted" style="margin-bottom: 10px;">
+      Total amount: <strong>{{ total_amount }}</strong>
+    </div>
     <table class="table">
       <thead>
         <tr>
           <th>Shortcode</th>
-          <th>TransID</th>
           <th>Amount</th>
-          <th>MSISDN</th>
-          <th>BillRef</th>
+          <th>TransTime</th>
           <th>Status</th>
-          <th>Created</th>
         </tr>
       </thead>
       <tbody>
         {% for t in transactions %}
           <tr>
             <td><code>{{ t.shortcode.shortcode }}</code></td>
-            <td>{{ t.trans_id }}</td>
             <td>{{ t.amount }}</td>
-            <td>{{ t.msisdn }}</td>
-            <td>{{ t.bill_ref_number }}</td>
+            <td class="muted">{% if t.trans_time %}{{ t.trans_time }}{% else %}{{ t.created_at }}{% endif %}</td>
             <td><span class="pill pill--{{ t.status|lower }}">{{ t.status }}</span></td>
-            <td class="muted">{{ t.created_at }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="muted">No transactions for this filter.</td></tr>
+          <tr><td colspan="4" class="muted">No transactions for this filter.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
+
+  {% if refresh_seconds and refresh_seconds > 0 %}
+    <script>
+      (function () {
+        var ms = {{ refresh_seconds|default:0 }} * 1000;
+        if (!ms) return;
+        window.setTimeout(function () {
+          window.location.reload();
+        }, ms);
+      })();
+    </script>
+  {% endif %}
 {% endblock %}
 
